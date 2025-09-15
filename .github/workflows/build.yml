@@ -1,0 +1,98 @@
+name: build
+
+on:
+  push:
+    branches:
+      - '**'
+  pull_request:
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [amd64, arm64]
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@v3
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build binary (linux/${{ matrix.arch }})
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: ./Dockerfile
+          target: export
+          platforms: linux/${{ matrix.arch }}
+          push: false
+          load: false
+          outputs: type=local,dest=./dist/linux/${{ matrix.arch }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Show built files
+        run: |
+          ls -lah ./dist/linux/${{ matrix.arch }} | cat
+
+      - name: Upload binary artifact (linux-${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-linux-${{ matrix.arch }}
+          path: ./dist/linux/${{ matrix.arch }}/example
+          if-no-files-found: error
+          retention-days: 7
+
+  build_macos:
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-13
+            arch: amd64
+          - runner: macos-14
+            arch: arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build darwin/${{ matrix.arch }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SDKROOT=$(xcrun --sdk macosx --show-sdk-path)
+          export SDKROOT
+          export GOOS=darwin GOARCH=${{ matrix.arch }} CGO_ENABLED=1
+          mkdir -p ./dist/darwin/${{ matrix.arch }}
+          go mod download
+          go build -trimpath -ldflags "-s -w" -o ./dist/darwin/${{ matrix.arch }}/example .
+
+      - name: Show built files
+        run: |
+          ls -lah ./dist/darwin/${{ matrix.arch }} | cat
+
+      - name: Upload binary artifact (darwin-${{ matrix.arch }})
+        uses: actions/upload-artifact@v4
+        with:
+          name: example-darwin-${{ matrix.arch }}
+          path: ./dist/darwin/${{ matrix.arch }}/example
+          if-no-files-found: error
+          retention-days: 7
+
